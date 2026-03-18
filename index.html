@@ -696,6 +696,14 @@ function updateMenuScores() {
 function showMenu() {
     gameActive = false;
     gameOver = false;
+    satellites = [];
+    particles = [];
+    floatingTexts = [];
+    comets = [];
+    ghostTrails = [];
+    stopAllHums();
+    PLANET_R = BASE_PLANET_R;
+    permanentOrbitCount = 0;
     overlay.classList.remove('active');
     menu.classList.remove('hidden');
     updateMenuScores();
@@ -750,6 +758,14 @@ function onDown(e) {
     // Screenshot mode: tap to resume
     if (screenshotMode) {
         toggleScreenshotMode();
+        return;
+    }
+
+    // Back to menu button hit test
+    const pos = getPos(e);
+    const menuBtnY = (gameMode === 'free') ? 28 : 48;
+    if (pos.x < 90 && pos.y > menuBtnY - 14 && pos.y < menuBtnY + 6) {
+        showMenu();
         return;
     }
 
@@ -1381,6 +1397,15 @@ function drawUI() {
         ctx.textAlign = 'right';
         ctx.fillStyle = colorWithAlpha('#54ffb0', 0.8);
         ctx.fillText('STREAK: ' + streakCount, W - 20, 68);
+    }
+
+    // Back to menu button
+    if (!gameOver) {
+        ctx.font = '12px "Courier New", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        const menuBtnY = (gameMode === 'free') ? 28 : 48;
+        ctx.fillText('\u2190 MENU', 15, menuBtnY);
     }
 
     // Tutorial
