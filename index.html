@@ -27,11 +27,56 @@ canvas{display:block}
 .btn-primary{border-color:#ffd700;color:#ffd700}
 .btn-primary:hover{background:rgba(255,215,0,0.1)}
 #copied{font-size:0.8rem;color:#54ffb0;opacity:0;transition:opacity 0.3s;margin-top:0.3rem}
+/* Menu styles */
+#menu{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;background:#0a0a0f;font-family:'Courier New',monospace;color:#fff}
+#menu.hidden{display:none}
+#menu h1{font-size:4rem;font-weight:100;letter-spacing:0.6em;margin-bottom:0.3rem;color:#fff}
+#menu .menu-sub{font-size:0.85rem;opacity:0.4;margin-bottom:2.5rem;letter-spacing:0.15em}
+#menu .menu-daily{font-size:0.8rem;color:#54ffb0;margin-bottom:1.5rem;letter-spacing:0.1em;opacity:0.7}
+.mode-btn{display:block;width:240px;background:transparent;border:1px solid rgba(255,255,255,0.25);color:#fff;font-family:'Courier New',monospace;font-size:1rem;padding:0.8rem 1.5rem;margin:0.35rem auto;cursor:pointer;letter-spacing:0.1em;transition:all 0.2s ease;border-radius:2px;text-align:left}
+.mode-btn:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.6)}
+.mode-btn .mode-name{display:block;font-size:1rem}
+.mode-btn .mode-desc{display:block;font-size:0.65rem;opacity:0.4;margin-top:0.2rem}
+.mode-btn .mode-score{display:block;font-size:0.6rem;color:#ffd700;opacity:0.6;margin-top:0.15rem}
+.mode-btn-daily{border-color:rgba(84,255,176,0.4);color:#54ffb0}
+.mode-btn-daily:hover{background:rgba(84,255,176,0.06);border-color:rgba(84,255,176,0.7)}
+#menu .menu-best{position:absolute;bottom:30px;font-size:0.75rem;opacity:0.3;letter-spacing:0.1em}
+/* Screenshot mode camera icon */
+#screenshot-icon{position:fixed;top:15px;left:50%;transform:translateX(-50%);z-index:15;display:none;font-size:1.5rem;opacity:0.5;color:#fff;font-family:'Courier New',monospace;pointer-events:none}
+#screenshot-icon.active{display:block}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="vignette"></div>
+<!-- Menu -->
+<div id="menu">
+<h1>ORBIT</h1>
+<div class="menu-sub">launch satellites &bull; create art</div>
+<div class="menu-daily" id="menu-daily"></div>
+<button class="mode-btn" id="btn-free">
+<span class="mode-name">FREE ORBIT</span>
+<span class="mode-desc">infinite lives &bull; chill mode</span>
+<span class="mode-score" id="score-free"></span>
+</button>
+<button class="mode-btn" id="btn-survival">
+<span class="mode-name">SURVIVAL</span>
+<span class="mode-desc">5 lives &bull; how far can you go?</span>
+<span class="mode-score" id="score-survival"></span>
+</button>
+<button class="mode-btn" id="btn-precision">
+<span class="mode-name">PRECISION</span>
+<span class="mode-desc">10 launches &bull; every shot counts</span>
+<span class="mode-score" id="score-precision"></span>
+</button>
+<button class="mode-btn mode-btn-daily" id="btn-daily">
+<span class="mode-name" id="daily-label">DAILY #1</span>
+<span class="mode-desc">same seed for everyone &bull; daily challenge</span>
+<span class="mode-score" id="score-daily"></span>
+</button>
+<div class="menu-best" id="menu-best"></div>
+</div>
+<!-- Game Over overlay -->
 <div id="overlay">
 <div id="overlay-bg"></div>
 <div id="overlay-content">
@@ -41,11 +86,13 @@ canvas{display:block}
 <div class="newbest" id="go-newbest">NEW BEST SCORE!</div>
 <div style="margin-top:1.2rem">
 <button class="btn btn-primary" id="btn-play">PLAY AGAIN</button>
+<button class="btn" id="btn-menu">MENU</button>
 <button class="btn" id="btn-share">SHARE</button>
 </div>
 <div id="copied">Copied!</div>
 </div>
 </div>
+<div id="screenshot-icon">[pause]</div>
 <script>
 (function(){
 "use strict";
@@ -53,15 +100,17 @@ canvas{display:block}
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const overlay = document.getElementById('overlay');
+const menu = document.getElementById('menu');
+const screenshotIcon = document.getElementById('screenshot-icon');
 
 // --- Constants ---
 const BG = '#0a0a0f';
 const SAT_COLORS = ['#00fff2','#ff006e','#ff7b54','#54ffb0','#b054ff'];
 const GOLD = '#ffd700';
-const PLANET_R = 30;
+const BASE_PLANET_R = 30;
+let PLANET_R = BASE_PLANET_R;
 const SAT_R = 4;
 const MAX_SATS = 50;
-const LIVES_TOTAL = 5;
 const TRAIL_LEN = 300;
 const STAR_COUNT = 80;
 const DRAG_COEFF = 0.9999;
@@ -69,30 +118,75 @@ const MAX_VEL = 18;
 const PREDICTION_DOTS = 15;
 const PREDICTION_TIME = 0.3;
 const ESCAPE_MARGIN = 100;
+const RAINBOW_COLORS = ['#ff0000','#ff7700','#ffff00','#00ff00','#0077ff','#8800ff'];
 
 // Gravity tuning
 let G_CONST = 800;
 let PLANET_MASS = 800;
 const PERM_GRAV_FRAC = 1/50;
 
+// --- Game mode ---
+// 'free', 'survival', 'precision', 'daily'
+let gameMode = 'survival';
+const LIVES_TOTAL = 5;
+const PRECISION_LAUNCHES = 10;
+
+// --- Daily seed ---
+function getDailyNumber() {
+    const d = new Date();
+    const epoch = new Date(2024, 0, 1);
+    return Math.floor((d - epoch) / (1000 * 60 * 60 * 24));
+}
+
+function seededRandom(seed) {
+    // Simple mulberry32 PRNG
+    let t = seed + 0x6D2B79F5;
+    return function() {
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+let dailySeed = getDailyNumber();
+let dailyRng = null;
+
+// --- High scores per mode ---
+function getHighScore(mode) {
+    return parseInt(localStorage.getItem('orbit_best_' + mode)) || 0;
+}
+function setHighScore(mode, val) {
+    localStorage.setItem('orbit_best_' + mode, val);
+}
+// Migrate old score
+if (localStorage.getItem('orbit_best') && !localStorage.getItem('orbit_best_survival')) {
+    localStorage.setItem('orbit_best_survival', localStorage.getItem('orbit_best'));
+}
+
+function getOverallBest() {
+    return Math.max(getHighScore('free'), getHighScore('survival'), getHighScore('precision'), getHighScore('daily'));
+}
+
 // --- State ---
 let W, H, cx, cy;
 let score = 0;
-let bestScore = parseInt(localStorage.getItem('orbit_best')) || 0;
+let bestScore = 0;
 let lives = LIVES_TOTAL;
+let launchesLeft = PRECISION_LAUNCHES;
 let satellites = [];
 let particles = [];
 let stars = [];
 let floatingTexts = [];
 let colorIdx = 0;
 let gameOver = false;
+let gameActive = false;
 let firstLaunch = true;
 let tutorialAlpha = 1;
 let screenShake = {x:0, y:0, t:0};
 let screenFlash = {a:0, color:'#fff'};
 let scoreFlash = {scale:1, t:0};
 let ghostTrails = [];
-let dragState = null; // {sx, sy, cx, cy, active}
+let dragState = null;
 let audioCtx = null;
 let audioStarted = false;
 let droneGain = null;
@@ -100,6 +194,32 @@ let permHums = [];
 let lastTime = 0;
 let planetGlowExtra = 0;
 let planetPulse = 0;
+let permanentOrbitCount = 0;
+
+// --- Comet state ---
+let comets = [];
+let nextCometTime = 0; // seconds until next comet
+let cometTimer = 0;
+
+// --- Streak state ---
+let streakCount = 0; // consecutive permanent orbits without crash/escape
+let streakActive = false; // is streak bonus active?
+let streakDisplayTimer = 0; // how long to show streak counter
+let auroraTimer = 0; // aurora flash duration
+let planetStreakPulse = 0; // planet brightness boost from streak
+
+// --- Screenshot mode ---
+let screenshotMode = false;
+let lastTapTime = 0;
+let longPressTimer = null;
+let longPressTriggered = false;
+
+// --- Visual juice ---
+let permanentWavePulses = []; // [{satIdx, timer}]
+let orbitingGlowPhase = 0;
+
+// --- Gravitational lensing ---
+// computed per frame
 
 // --- Resize ---
 function resize() {
@@ -112,27 +232,67 @@ window.addEventListener('resize', resize);
 resize();
 
 // --- Stars ---
-function initStars() {
+function initStars(rng) {
     stars = [];
+    const rand = rng || Math.random;
     for (let i = 0; i < STAR_COUNT; i++) {
         stars.push({
-            x: Math.random() * W,
-            y: Math.random() * H,
-            r: 0.5 + Math.random() * 1.5,
-            b: 0.3 + Math.random() * 0.5,
-            freq: 0.5 + Math.random() * 2,
-            phase: Math.random() * Math.PI * 2
+            x: rand() * W,
+            y: rand() * H,
+            baseX: 0, baseY: 0, // set after
+            r: 0.5 + rand() * 1.5,
+            b: 0.3 + rand() * 0.5,
+            freq: 0.5 + rand() * 2,
+            phase: rand() * Math.PI * 2
         });
     }
+    stars.forEach(s => { s.baseX = s.x; s.baseY = s.y; });
 }
 initStars();
+
+// --- Comet helpers ---
+function scheduleNextComet(rng) {
+    const rand = rng || Math.random;
+    nextCometTime = 30 + rand() * 15; // 30-45 seconds
+    cometTimer = 0;
+}
+
+function spawnComet() {
+    // Pick random diagonal direction
+    const side = Math.floor(Math.random() * 4); // 0=top,1=right,2=bottom,3=left
+    let sx, sy, ex, ey;
+    const margin = 50;
+    if (side === 0) { // top to bottom-ish
+        sx = Math.random() * W; sy = -margin;
+        ex = Math.random() * W; ey = H + margin;
+    } else if (side === 1) { // right to left-ish
+        sx = W + margin; sy = Math.random() * H;
+        ex = -margin; ey = Math.random() * H;
+    } else if (side === 2) { // bottom to top-ish
+        sx = Math.random() * W; sy = H + margin;
+        ex = Math.random() * W; ey = -margin;
+    } else { // left to right-ish
+        sx = -margin; sy = Math.random() * H;
+        ex = W + margin; ey = Math.random() * H;
+    }
+    const dx = ex - sx, dy = ey - sy;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const speed = 600 + Math.random() * 300; // px/s
+    comets.push({
+        x: sx, y: sy,
+        vx: (dx / d) * speed,
+        vy: (dy / d) * speed,
+        trail: [],
+        alive: true,
+        slingshot: false
+    });
+}
 
 // --- Audio ---
 function initAudio() {
     if (audioStarted) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     audioStarted = true;
-    // Ambient drone
     const osc = audioCtx.createOscillator();
     osc.type = 'sine';
     osc.frequency.value = 60;
@@ -140,7 +300,6 @@ function initAudio() {
     droneGain.gain.value = 0.03;
     osc.connect(droneGain).connect(audioCtx.destination);
     osc.start();
-    // Slow modulation
     const lfo = audioCtx.createOscillator();
     lfo.type = 'sine';
     lfo.frequency.value = 0.1;
@@ -164,7 +323,6 @@ function playSound(type) {
         o.connect(g).connect(audioCtx.destination);
         o.start(t); o.stop(t + 0.1);
     } else if (type === 'orbit') {
-        // C5 then G5 chime
         [523.25, 783.99].forEach((freq, i) => {
             const o = audioCtx.createOscillator();
             o.type = 'sine';
@@ -211,6 +369,30 @@ function playSound(type) {
             o.connect(g).connect(audioCtx.destination);
             o.start(t + i * 0.2); o.stop(t + i * 0.2 + 0.6);
         });
+    } else if (type === 'slingshot') {
+        // Exciting rising chime
+        [400, 600, 900, 1200].forEach((freq, i) => {
+            const o = audioCtx.createOscillator();
+            o.type = 'sine';
+            o.frequency.value = freq;
+            const g = audioCtx.createGain();
+            g.gain.setValueAtTime(0.12, t + i * 0.05);
+            g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.05 + 0.3);
+            o.connect(g).connect(audioCtx.destination);
+            o.start(t + i * 0.05); o.stop(t + i * 0.05 + 0.35);
+        });
+    } else if (type === 'streak') {
+        // Aurora-like sound
+        [330, 440, 550, 660].forEach((freq, i) => {
+            const o = audioCtx.createOscillator();
+            o.type = 'triangle';
+            o.frequency.value = freq;
+            const g = audioCtx.createGain();
+            g.gain.setValueAtTime(0.08, t + i * 0.1);
+            g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.1 + 0.5);
+            o.connect(g).connect(audioCtx.destination);
+            o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.6);
+        });
     }
 }
 
@@ -231,6 +413,11 @@ function addPermHum(idx) {
 function stopAllHums() {
     permHums.forEach(h => { try { h.osc.stop(); } catch(e){} });
     permHums = [];
+}
+
+// --- Haptics ---
+function haptic(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e){}
 }
 
 // --- Physics helpers ---
@@ -258,7 +445,9 @@ function createSat(x, y, vx, vy, color) {
         alive: true,
         goldTransition: 0,
         hueShift: 0,
-        ringPulse: 0
+        ringPulse: 0,
+        rainbowTimer: 0, // comet slingshot rainbow trail
+        slingshotBoost: false
     };
 }
 
@@ -268,20 +457,16 @@ function predictPath(sx, sy, vx, vy) {
     const points = [];
     let px = sx, py = sy, pvx = vx, pvy = vy;
     for (let i = 0; i < PREDICTION_DOTS; i++) {
-        // Planet gravity
         const pg = gravAccel(px, py, cx, cy, PLANET_MASS, G_CONST);
         pvx += pg.ax * dt; pvy += pg.ay * dt;
-        // Permanent satellite gravity
         satellites.forEach(s => {
             if (!s.permanent || !s.alive) return;
             const sg = gravAccel(px, py, s.x, s.y, PLANET_MASS * PERM_GRAV_FRAC, G_CONST);
             pvx += sg.ax * dt; pvy += sg.ay * dt;
         });
-        // Drag
         const dragFrames = dt * 60;
         const dragMult = Math.pow(DRAG_COEFF, dragFrames);
         pvx *= dragMult; pvy *= dragMult;
-        // Velocity cap
         const spd = Math.sqrt(pvx * pvx + pvy * pvy);
         if (spd > MAX_VEL) { pvx = pvx / spd * MAX_VEL; pvy = pvy / spd * MAX_VEL; }
         px += pvx * dt * 60; py += pvy * dt * 60;
@@ -300,7 +485,7 @@ function spawnExplosion(x, y, color) {
             vx: Math.cos(angle) * speed,
             vy: Math.sin(angle) * speed,
             life: 1,
-            decay: 0.8 / 0.8 / 60, // ~0.8s
+            decay: 0.8 / 0.8 / 60,
             color,
             r: 1 + Math.random() * 2
         });
@@ -314,13 +499,13 @@ function spawnRingPulse(x, y) {
 }
 
 // --- Floating text ---
-function addFloatingText(text, x, y, color) {
-    floatingTexts.push({text, x, y, alpha: 1, vy: -1.5, color: color || '#fff'});
+function addFloatingText(text, x, y, color, size) {
+    floatingTexts.push({text, x, y, alpha: 1, vy: -1.5, color: color || '#fff', size: size || 16});
 }
 
 // --- Game logic ---
 function launchSatellite(sx, sy, vx, vy) {
-    // Remove oldest non-permanent if at cap
+    if (gameMode === 'precision' && launchesLeft <= 0) return;
     if (satellites.length >= MAX_SATS) {
         const idx = satellites.findIndex(s => !s.permanent);
         if (idx >= 0) satellites.splice(idx, 1);
@@ -329,34 +514,111 @@ function launchSatellite(sx, sy, vx, vy) {
     colorIdx++;
     satellites.push(createSat(sx, sy, vx, vy, color));
     playSound('launch');
-}
-
-function loseLife() {
-    lives--;
-    playSound('lifelost');
-    if (lives <= 0) {
-        endGame();
+    haptic(10);
+    if (gameMode === 'precision') {
+        launchesLeft--;
+        if (launchesLeft <= 0 && !hasPendingSatellites()) {
+            // Will check after all current satellites resolve
+        }
     }
 }
 
+function hasPendingSatellites() {
+    return satellites.some(s => !s.permanent && s.alive);
+}
+
+function onSatelliteLost(wasPermanent) {
+    if (wasPermanent) return;
+    // Reset streak on crash or escape
+    streakCount = 0;
+    streakActive = false;
+    streakDisplayTimer = 0;
+
+    if (gameMode === 'survival') {
+        lives--;
+        playSound('lifelost');
+        haptic(50);
+        if (lives <= 0) {
+            endGame();
+        }
+    } else if (gameMode === 'precision') {
+        // In precision, check if no launches left and no pending
+        if (launchesLeft <= 0 && !hasPendingSatellites()) {
+            setTimeout(() => {
+                if (launchesLeft <= 0 && !hasPendingSatellites()) endGame();
+            }, 500);
+        }
+    }
+    // free mode: no life penalty
+    // daily: same as survival
+    if (gameMode === 'daily') {
+        lives--;
+        playSound('lifelost');
+        haptic(50);
+        if (lives <= 0) {
+            endGame();
+        }
+    }
+}
+
+function onOrbitAchieved(sat) {
+    score++;
+    permanentOrbitCount++;
+    PLANET_R = BASE_PLANET_R + permanentOrbitCount * 0.5;
+    planetGlowExtra += 0.02;
+    scoreFlash.t = 0.3;
+    screenFlash.a = 0.05;
+    screenFlash.color = '#fff';
+    addFloatingText('+1', sat.x, sat.y - 15, GOLD);
+    playSound('orbit');
+    haptic([15, 30, 15]);
+    addPermHum(score - 1);
+    spawnRingPulse(sat.x, sat.y);
+
+    // Streak tracking
+    streakCount++;
+    if (streakCount >= 3 && streakCount % 3 === 0) {
+        triggerStreakBonus();
+    }
+
+    // Visual juice: wave pulse through permanent satellites
+    triggerPermWave();
+}
+
+function triggerStreakBonus() {
+    streakActive = true;
+    streakDisplayTimer = 5;
+    auroraTimer = 1.5;
+    planetStreakPulse = 5;
+    playSound('streak');
+    addFloatingText('+' + streakCount + ' STREAK', cx, cy - PLANET_R - 40, '#54ffb0', 22);
+}
+
+function triggerPermWave() {
+    permanentWavePulses = [];
+    let permSats = satellites.filter(s => s.permanent && s.alive);
+    permSats.forEach((s, i) => {
+        permanentWavePulses.push({sat: s, timer: i * 0.1 + 0.01});
+    });
+}
+
 function endGame() {
+    if (gameOver) return;
     gameOver = true;
     playSound('gameover');
-    // Save ghost trails
     ghostTrails = [];
     satellites.forEach(s => {
         if (s.permanent && s.trail.length > 0) {
             ghostTrails.push({trail: [...s.trail], color: s.color});
         }
     });
-    // Update best
     let isNewBest = false;
+    bestScore = getHighScore(gameMode);
     if (score > bestScore) {
         bestScore = score;
-        localStorage.setItem('orbit_best', bestScore);
+        setHighScore(gameMode, bestScore);
         isNewBest = true;
     }
-    // Show overlay
     document.getElementById('go-score').textContent = score + ' orbit' + (score !== 1 ? 's' : '') + ' stabilized';
     let ach = '';
     if (score >= 15) ach = 'GRAVITY ARTIST';
@@ -365,6 +627,8 @@ function endGame() {
     document.getElementById('go-achievement').textContent = ach;
     const nb = document.getElementById('go-newbest');
     nb.className = 'newbest' + (isNewBest ? ' show' : '');
+    // Exit screenshot mode if active
+    if (screenshotMode) toggleScreenshotMode();
     setTimeout(() => {
         overlay.classList.add('active');
     }, 500);
@@ -374,22 +638,102 @@ function resetGame(keepGhosts) {
     overlay.classList.remove('active');
     score = 0;
     lives = LIVES_TOTAL;
+    launchesLeft = PRECISION_LAUNCHES;
     satellites = [];
     particles = [];
     floatingTexts = [];
     colorIdx = 0;
     gameOver = false;
+    gameActive = true;
     firstLaunch = true;
     tutorialAlpha = 1;
     screenShake = {x:0, y:0, t:0};
     screenFlash = {a:0, color:'#fff'};
     scoreFlash = {scale:1, t:0};
     planetGlowExtra = 0;
+    permanentOrbitCount = 0;
+    PLANET_R = BASE_PLANET_R;
+    streakCount = 0;
+    streakActive = false;
+    streakDisplayTimer = 0;
+    auroraTimer = 0;
+    planetStreakPulse = 0;
+    permanentWavePulses = [];
+    comets = [];
     stopAllHums();
     if (!keepGhosts) ghostTrails = [];
     else {
-        // Fade ghosts
         ghostTrails.forEach(g => g.alpha = 0.15);
+    }
+    // Setup comet timing
+    if (gameMode === 'daily') {
+        dailySeed = getDailyNumber();
+        dailyRng = seededRandom(dailySeed);
+        initStars(dailyRng);
+        scheduleNextComet(dailyRng);
+    } else {
+        initStars();
+        scheduleNextComet();
+    }
+}
+
+// --- Menu ---
+function updateMenuScores() {
+    const sf = getHighScore('free');
+    const ss = getHighScore('survival');
+    const sp = getHighScore('precision');
+    const sd = getHighScore('daily');
+    document.getElementById('score-free').textContent = sf > 0 ? 'best: ' + sf : '';
+    document.getElementById('score-survival').textContent = ss > 0 ? 'best: ' + ss : '';
+    document.getElementById('score-precision').textContent = sp > 0 ? 'best: ' + sp : '';
+    document.getElementById('score-daily').textContent = sd > 0 ? 'best: ' + sd : '';
+    document.getElementById('daily-label').textContent = 'DAILY #' + getDailyNumber();
+    document.getElementById('menu-daily').textContent = 'daily #' + getDailyNumber() + ' available';
+    const best = getOverallBest();
+    document.getElementById('menu-best').textContent = best > 0 ? 'overall best: ' + best + ' orbits' : '';
+}
+
+function showMenu() {
+    gameActive = false;
+    gameOver = false;
+    overlay.classList.remove('active');
+    menu.classList.remove('hidden');
+    updateMenuScores();
+}
+
+function startMode(mode) {
+    gameMode = mode;
+    bestScore = getHighScore(mode);
+    menu.classList.add('hidden');
+    resetGame(false);
+}
+
+document.getElementById('btn-free').addEventListener('click', () => { initAudio(); startMode('free'); });
+document.getElementById('btn-survival').addEventListener('click', () => { initAudio(); startMode('survival'); });
+document.getElementById('btn-precision').addEventListener('click', () => { initAudio(); startMode('precision'); });
+document.getElementById('btn-daily').addEventListener('click', () => { initAudio(); startMode('daily'); });
+document.getElementById('btn-play').addEventListener('click', () => { resetGame(true); });
+document.getElementById('btn-menu').addEventListener('click', () => { showMenu(); });
+document.getElementById('btn-share').addEventListener('click', () => {
+    const modeLabel = gameMode === 'free' ? 'Free Orbit' : gameMode === 'survival' ? 'Survival' : gameMode === 'precision' ? 'Precision' : 'Daily #' + getDailyNumber();
+    const text = `I stabilized ${score} orbits in ${modeLabel} mode in Orbit! Play: https://alesicar.github.io/orbit-game/`;
+    navigator.clipboard.writeText(text).then(() => {
+        const el = document.getElementById('copied');
+        el.style.opacity = '1';
+        setTimeout(() => el.style.opacity = '0', 1500);
+    }).catch(() => {});
+});
+
+// Show menu on load
+updateMenuScores();
+
+// --- Screenshot mode ---
+function toggleScreenshotMode() {
+    screenshotMode = !screenshotMode;
+    if (screenshotMode) {
+        screenshotIcon.classList.add('active');
+    } else {
+        screenshotIcon.classList.remove('active');
     }
 }
 
@@ -400,21 +744,62 @@ function getPos(e) {
 }
 
 function onDown(e) {
+    if (!gameActive) return;
     if (gameOver) return;
+
+    // Screenshot mode: tap to resume
+    if (screenshotMode) {
+        toggleScreenshotMode();
+        return;
+    }
+
     initAudio();
+
+    // Long press detection for screenshot mode
+    longPressTriggered = false;
+    longPressTimer = setTimeout(() => {
+        longPressTriggered = true;
+        if (!gameOver) toggleScreenshotMode();
+    }, 1000);
+
     const p = getPos(e);
     dragState = {sx: p.x, sy: p.y, cx: p.x, cy: p.y, active: true};
 }
 
 function onMove(e) {
     if (!dragState || !dragState.active) return;
+    // If moved enough, cancel long press
     const p = getPos(e);
+    const dx = p.x - dragState.sx, dy = p.y - dragState.sy;
+    if (Math.sqrt(dx*dx+dy*dy) > 10 && longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+    }
     dragState.cx = p.x;
     dragState.cy = p.y;
 }
 
 function onUp(e) {
-    if (!dragState || !dragState.active || gameOver) { dragState = null; return; }
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    if (longPressTriggered) { dragState = null; return; }
+    if (screenshotMode) { dragState = null; return; }
+    if (!dragState || !dragState.active || gameOver || !gameActive) { dragState = null; return; }
+
+    // Double-tap detection for screenshot mode
+    const now = performance.now();
+    if (now - lastTapTime < 300) {
+        // Double tap
+        const dx2 = dragState.sx - dragState.cx;
+        const dy2 = dragState.sy - dragState.cy;
+        if (Math.sqrt(dx2*dx2+dy2*dy2) < 10) {
+            dragState = null;
+            lastTapTime = 0;
+            toggleScreenshotMode();
+            return;
+        }
+    }
+    lastTapTime = now;
+
     const dx = dragState.sx - dragState.cx;
     const dy = dragState.sy - dragState.cy;
     const d = Math.sqrt(dx * dx + dy * dy);
@@ -435,21 +820,13 @@ canvas.addEventListener('touchstart', e => { e.preventDefault(); onDown(e); }, {
 canvas.addEventListener('touchmove', e => { e.preventDefault(); onMove(e); }, {passive: false});
 canvas.addEventListener('touchend', e => { e.preventDefault(); onUp(e); }, {passive: false});
 
-// --- Overlay buttons ---
-document.getElementById('btn-play').addEventListener('click', () => { resetGame(true); });
-document.getElementById('btn-share').addEventListener('click', () => {
-    const text = `I stabilized ${score} orbits in Orbit! Play: https://alesicar.github.io/orbit-game/`;
-    navigator.clipboard.writeText(text).then(() => {
-        const el = document.getElementById('copied');
-        el.style.opacity = '1';
-        setTimeout(() => el.style.opacity = '0', 1500);
-    }).catch(() => {});
-});
-
 // --- Update ---
 function update(dt) {
-    if (gameOver) return;
+    if (!gameActive || gameOver) return;
+    if (screenshotMode) return; // Paused
+
     planetPulse += dt;
+    orbitingGlowPhase += dt;
 
     // Tutorial fade
     if (!firstLaunch && tutorialAlpha > 0) {
@@ -478,6 +855,75 @@ function update(dt) {
         scoreFlash.scale = 1;
     }
 
+    // Aurora timer
+    if (auroraTimer > 0) auroraTimer = Math.max(0, auroraTimer - dt);
+
+    // Streak display timer
+    if (streakDisplayTimer > 0) streakDisplayTimer = Math.max(0, streakDisplayTimer - dt);
+    if (streakDisplayTimer <= 0) streakActive = false;
+
+    // Planet streak pulse
+    if (planetStreakPulse > 0) planetStreakPulse = Math.max(0, planetStreakPulse - dt);
+
+    // Permanent wave pulses
+    for (let i = permanentWavePulses.length - 1; i >= 0; i--) {
+        const pw = permanentWavePulses[i];
+        pw.timer -= dt;
+        if (pw.timer <= 0 && pw.timer > -0.3) {
+            pw.sat.ringPulse = Math.max(pw.sat.ringPulse, 1);
+        }
+        if (pw.timer < -0.5) permanentWavePulses.splice(i, 1);
+    }
+
+    // --- Comet update ---
+    cometTimer += dt;
+    if (cometTimer >= nextCometTime) {
+        spawnComet();
+        if (gameMode === 'daily' && dailyRng) {
+            scheduleNextComet(dailyRng);
+        } else {
+            scheduleNextComet();
+        }
+    }
+
+    for (let i = comets.length - 1; i >= 0; i--) {
+        const c = comets[i];
+        c.x += c.vx * dt;
+        c.y += c.vy * dt;
+        c.trail.push({x: c.x, y: c.y, t: 1});
+        if (c.trail.length > 40) c.trail.shift();
+
+        // Check collision with non-permanent satellites
+        for (let j = 0; j < satellites.length; j++) {
+            const s = satellites[j];
+            if (!s.alive || s.permanent) continue;
+            const d = dist(s.x, s.y, c.x, c.y);
+            if (d < 20) {
+                // SLINGSHOT!
+                const cSpeed = Math.sqrt(c.vx * c.vx + c.vy * c.vy);
+                const boostDir = Math.atan2(c.vy, c.vx);
+                s.vx += Math.cos(boostDir) * cSpeed * 0.3;
+                s.vy += Math.sin(boostDir) * cSpeed * 0.3;
+                s.rainbowTimer = 3;
+                s.slingshotBoost = true;
+                addFloatingText('SLINGSHOT!', s.x, s.y - 25, GOLD, 20);
+                playSound('slingshot');
+                haptic([15, 30, 15, 30, 15]);
+                c.slingshot = true;
+            }
+        }
+
+        // Remove if off screen
+        if (c.x < -200 || c.x > W + 200 || c.y < -200 || c.y > H + 200) {
+            comets.splice(i, 1);
+            continue;
+        }
+
+        // Fade trail
+        c.trail.forEach(tp => tp.t -= dt * 2);
+        c.trail = c.trail.filter(tp => tp.t > 0);
+    }
+
     // Update satellites
     for (let i = satellites.length - 1; i >= 0; i--) {
         const s = satellites[i];
@@ -502,11 +948,12 @@ function update(dt) {
         s.vx *= dragMult;
         s.vy *= dragMult;
 
-        // Velocity cap
+        // Velocity cap (higher if slingshot boosted)
+        const maxV = s.slingshotBoost ? MAX_VEL * 2 : MAX_VEL;
         const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy);
-        if (spd > MAX_VEL) {
-            s.vx = s.vx / spd * MAX_VEL;
-            s.vy = s.vy / spd * MAX_VEL;
+        if (spd > maxV) {
+            s.vx = s.vx / spd * maxV;
+            s.vy = s.vy / spd * maxV;
         }
 
         // Move
@@ -516,6 +963,14 @@ function update(dt) {
         // Trail
         s.trail.push({x: s.x, y: s.y});
         if (s.trail.length > TRAIL_LEN) s.trail.shift();
+
+        // Rainbow timer decay
+        if (s.rainbowTimer > 0) {
+            s.rainbowTimer -= dt;
+            if (s.rainbowTimer <= 0) {
+                s.slingshotBoost = false;
+            }
+        }
 
         // Hue shift for permanent
         if (s.permanent) {
@@ -536,26 +991,16 @@ function update(dt) {
         if (!s.permanent) {
             const angle = Math.atan2(s.y - cy, s.x - cx);
             let delta = angle - s.lastAngle;
-            // Normalize to [-PI, PI]
             if (delta > Math.PI) delta -= 2 * Math.PI;
             if (delta < -Math.PI) delta += 2 * Math.PI;
             s.angleAccum += delta;
             s.lastAngle = angle;
 
             if (Math.abs(s.angleAccum) >= Math.PI * 2) {
-                // Orbit achieved!
                 s.permanent = true;
                 s.goldTransition = 0;
                 s.ringPulse = 1;
-                score++;
-                planetGlowExtra += 0.02;
-                scoreFlash.t = 0.3;
-                screenFlash.a = 0.05;
-                screenFlash.color = '#fff';
-                addFloatingText('+1', s.x, s.y - 15, GOLD);
-                playSound('orbit');
-                addPermHum(score - 1);
-                spawnRingPulse(s.x, s.y);
+                onOrbitAchieved(s);
             }
         }
 
@@ -566,10 +1011,10 @@ function update(dt) {
             spawnExplosion(s.x, s.y, s.permanent ? GOLD : s.color);
             screenShake.t = 0.3;
             playSound('crash');
-            if (s.permanent) {
-                // Losing a permanent satellite doesn't lose a life but we keep behavior simple
-            }
+            haptic(30);
+            const wasPerm = s.permanent;
             satellites.splice(i, 1);
+            onSatelliteLost(wasPerm);
             continue;
         }
 
@@ -577,15 +1022,18 @@ function update(dt) {
         if (s.x < -ESCAPE_MARGIN || s.x > W + ESCAPE_MARGIN ||
             s.y < -ESCAPE_MARGIN || s.y > H + ESCAPE_MARGIN) {
             s.alive = false;
-            // Red flash on edge
             screenFlash.a = 0.15;
             screenFlash.color = '#ff0000';
-            if (!s.permanent) {
-                loseLife();
-            }
+            const wasPerm = s.permanent;
             satellites.splice(i, 1);
+            onSatelliteLost(wasPerm);
             continue;
         }
+    }
+
+    // Precision mode: check if all done
+    if (gameMode === 'precision' && launchesLeft <= 0 && !hasPendingSatellites() && !gameOver) {
+        endGame();
     }
 
     // Particles
@@ -621,8 +1069,35 @@ function draw() {
     ctx.fillStyle = BG;
     ctx.fillRect(-10, -10, W + 20, H + 20);
 
-    // Stars
+    // Stars (with gravitational lensing)
     const now = performance.now() / 1000;
+
+    // Compute lensing displacement for each star
+    stars.forEach(s => {
+        s.x = s.baseX;
+        s.y = s.baseY;
+    });
+
+    // Gravitational lensing: displace stars near fast satellites close to planet
+    satellites.forEach(sat => {
+        if (!sat.alive) return;
+        const dPlanet = dist(sat.x, sat.y, cx, cy);
+        if (dPlanet < PLANET_R * 2 && dPlanet > PLANET_R) {
+            const lensStrength = 1 - (dPlanet - PLANET_R) / PLANET_R; // 0 to 1
+            stars.forEach(s => {
+                const dStar = dist(s.baseX, s.baseY, sat.x, sat.y);
+                if (dStar < 80) {
+                    const push = lensStrength * (1 - dStar / 80) * 8;
+                    const dx = s.baseX - sat.x;
+                    const dy = s.baseY - sat.y;
+                    const dd = Math.sqrt(dx * dx + dy * dy) || 1;
+                    s.x += (dx / dd) * push;
+                    s.y += (dy / dd) * push;
+                }
+            });
+        }
+    });
+
     stars.forEach(s => {
         const twinkle = s.b + 0.2 * Math.sin(now * s.freq + s.phase);
         ctx.beginPath();
@@ -644,12 +1119,38 @@ function draw() {
         ctx.stroke();
     });
 
+    // Comet trails
+    comets.forEach(c => {
+        if (c.trail.length < 2) return;
+        for (let i = 1; i < c.trail.length; i++) {
+            const alpha = c.trail[i].t * 0.8;
+            const width = c.trail[i].t * 2;
+            ctx.beginPath();
+            ctx.moveTo(c.trail[i-1].x, c.trail[i-1].y);
+            ctx.lineTo(c.trail[i].x, c.trail[i].y);
+            ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, alpha)})`;
+            ctx.lineWidth = Math.max(0.5, width);
+            ctx.stroke();
+        }
+        // Bright head
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 2, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        // Glow
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.fill();
+    });
+
     // Planet glow (bloom pass)
     const glowR = PLANET_R * 3 + planetGlowExtra * PLANET_R * 50;
     const pulseR = 1 + 0.03 * Math.sin(planetPulse * 2);
+    const streakBright = planetStreakPulse > 0 ? 0.1 * (planetStreakPulse / 5) : 0;
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR * pulseR);
-    grad.addColorStop(0, 'rgba(150,130,255,0.15)');
-    grad.addColorStop(0.5, 'rgba(80,60,200,0.06)');
+    grad.addColorStop(0, `rgba(150,130,255,${0.15 + streakBright})`);
+    grad.addColorStop(0.5, `rgba(80,60,200,${0.06 + streakBright * 0.3})`);
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.beginPath();
     ctx.arc(cx, cy, glowR * pulseR, 0, Math.PI * 2);
@@ -679,13 +1180,18 @@ function draw() {
     // Satellite trails
     satellites.forEach(s => {
         if (s.trail.length < 2) return;
+        const isRainbow = s.rainbowTimer > 0;
         const maxAlpha = s.permanent ? 0.4 : 1.0;
         const lw = s.permanent ? 1 : 2;
         for (let i = 1; i < s.trail.length; i++) {
             const alpha = maxAlpha * (i / s.trail.length);
-            let c = s.permanent ? GOLD : s.origColor;
-            if (s.permanent && s.hueShift) {
+            let c;
+            if (isRainbow) {
+                c = RAINBOW_COLORS[i % RAINBOW_COLORS.length];
+            } else if (s.permanent && s.hueShift) {
                 c = shiftHue(s.origColor, s.hueShift);
+            } else {
+                c = s.permanent ? GOLD : s.origColor;
             }
             ctx.beginPath();
             ctx.moveTo(s.trail[i - 1].x, s.trail[i - 1].y);
@@ -701,6 +1207,18 @@ function draw() {
         let color = s.origColor;
         if (s.permanent) {
             color = lerpColor(s.origColor, GOLD, s.goldTransition);
+        }
+
+        // Visual juice: pulsing glow for non-permanent orbiting satellites
+        if (!s.permanent && s.alive) {
+            const glowPulse = 8 + 2 * Math.sin(orbitingGlowPhase * 4);
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, glowPulse, 0, Math.PI * 2);
+            const gg = ctx.createRadialGradient(s.x, s.y, SAT_R, s.x, s.y, glowPulse);
+            gg.addColorStop(0, colorWithAlpha(s.origColor, 0.25));
+            gg.addColorStop(1, colorWithAlpha(s.origColor, 0));
+            ctx.fillStyle = gg;
+            ctx.fill();
         }
 
         // Bloom pass
@@ -743,7 +1261,7 @@ function draw() {
     });
 
     // Drag aiming
-    if (dragState && dragState.active) {
+    if (dragState && dragState.active && !screenshotMode) {
         const dx = dragState.sx - dragState.cx;
         const dy = dragState.sy - dragState.cy;
         const d = Math.sqrt(dx * dx + dy * dy);
@@ -753,14 +1271,12 @@ function draw() {
             const vy = (dy / d) * power;
             const color = SAT_COLORS[colorIdx % SAT_COLORS.length];
 
-            // Preview satellite (pulsing)
             const pulse = 1 + 0.2 * Math.sin(now * 6);
             ctx.beginPath();
             ctx.arc(dragState.sx, dragState.sy, SAT_R * pulse, 0, Math.PI * 2);
             ctx.fillStyle = colorWithAlpha(color, 0.7);
             ctx.fill();
 
-            // Prediction dots
             const pts = predictPath(dragState.sx, dragState.sy, vx, vy);
             pts.forEach((pt, i) => {
                 const alpha = 0.5 * (1 - i / pts.length);
@@ -774,7 +1290,7 @@ function draw() {
 
     // Floating texts
     floatingTexts.forEach(ft => {
-        ctx.font = 'bold 16px "Courier New", monospace';
+        ctx.font = 'bold ' + ft.size + 'px "Courier New", monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = colorWithAlpha(ft.color, ft.alpha);
         ctx.fillText(ft.text, ft.x, ft.y);
@@ -782,30 +1298,60 @@ function draw() {
 
     ctx.restore();
 
+    // Aurora effect (after restore, no shake)
+    if (auroraTimer > 0) {
+        const aAlpha = Math.min(1, auroraTimer) * 0.25;
+        const auroraColors = ['rgba(84,255,176,', 'rgba(0,255,242,', 'rgba(176,84,255,', 'rgba(255,0,110,'];
+        const bandH = 30;
+        for (let i = 0; i < auroraColors.length; i++) {
+            const y = i * bandH;
+            const wave = Math.sin(now * 3 + i * 0.5) * 10;
+            ctx.fillStyle = auroraColors[i] + (aAlpha * (1 - i * 0.2)) + ')';
+            ctx.fillRect(0, y + wave, W, bandH);
+        }
+    }
+
     // Screen flash (after restore, no shake)
     if (screenFlash.a > 0) {
         ctx.fillStyle = colorWithAlpha(screenFlash.color, screenFlash.a);
         ctx.fillRect(0, 0, W, H);
     }
 
-    // UI
-    drawUI();
+    // UI (hidden in screenshot mode)
+    if (!screenshotMode) {
+        drawUI();
+    }
 }
 
 function drawUI() {
-    // Lives
-    for (let i = 0; i < LIVES_TOTAL; i++) {
-        const lx = 20 + i * 18;
-        const ly = 25;
-        ctx.beginPath();
-        ctx.arc(lx, ly, 5, 0, Math.PI * 2);
-        if (i < lives) {
-            ctx.fillStyle = '#00fff2';
-        } else {
-            ctx.fillStyle = 'rgba(0,255,242,0.15)';
+    if (!gameActive) return;
+
+    // Mode-specific UI
+    if (gameMode === 'survival' || gameMode === 'daily') {
+        // Lives
+        for (let i = 0; i < LIVES_TOTAL; i++) {
+            const lx = 20 + i * 18;
+            const ly = 25;
+            ctx.beginPath();
+            ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+            ctx.fillStyle = i < lives ? '#00fff2' : 'rgba(0,255,242,0.15)';
+            ctx.fill();
         }
-        ctx.fill();
+    } else if (gameMode === 'precision') {
+        // Launches remaining
+        ctx.font = '12px "Courier New", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillText('LAUNCHES: ' + launchesLeft, 15, 28);
     }
+    // Free mode: no lives/launches indicator
+
+    // Mode label
+    ctx.font = '10px "Courier New", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    const modeLabels = {free: 'FREE ORBIT', survival: 'SURVIVAL', precision: 'PRECISION', daily: 'DAILY #' + getDailyNumber()};
+    ctx.fillText(modeLabels[gameMode] || '', 15, H - 15);
 
     // Score
     ctx.save();
@@ -825,8 +1371,17 @@ function drawUI() {
 
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.font = '12px "Courier New", monospace';
+    bestScore = getHighScore(gameMode);
     ctx.fillText('BEST: ' + bestScore, sx, 48);
     ctx.restore();
+
+    // Streak counter
+    if (streakActive && streakCount >= 3) {
+        ctx.font = 'bold 14px "Courier New", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = colorWithAlpha('#54ffb0', 0.8);
+        ctx.fillText('STREAK: ' + streakCount, W - 20, 68);
+    }
 
     // Tutorial
     if (firstLaunch && tutorialAlpha > 0) {
@@ -836,13 +1391,19 @@ function drawUI() {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff';
         ctx.fillText('drag to aim \u2022 release to launch', W / 2, H * 0.75);
+        if (gameMode === 'precision') {
+            ctx.font = '12px "Courier New", monospace';
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillText('10 launches — make them count', W / 2, H * 0.75 + 25);
+        }
         ctx.restore();
     }
 }
 
 // --- Color utilities ---
 function colorWithAlpha(hex, alpha) {
-    if (hex.startsWith('rgba')) return hex;
+    if (hex.startsWith('rgba')) return hex.replace(/,\s*[\d.]+\)$/, ',' + Math.max(0, Math.min(1, alpha)) + ')');
+    if (!hex.startsWith('#')) return hex;
     const r = parseInt(hex.slice(1,3), 16);
     const g = parseInt(hex.slice(3,5), 16);
     const b = parseInt(hex.slice(5,7), 16);
@@ -906,7 +1467,6 @@ function loop(timestamp) {
     if (!lastTime) lastTime = timestamp;
     let dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
-    // Clamp dt to avoid spiral of death
     if (dt > 0.05) dt = 0.05;
 
     update(dt);
